@@ -1,6 +1,6 @@
-const CACHE = 'zenzana-v3';
+const CACHE = 'zenzana-v4';
 const ASSETS = [
-  './', 'index.html', 'app.css', 'app.js', 'seed.js', 'manifest.webmanifest',
+  './', 'index.html', 'app.css', 'app.js', 'manifest.webmanifest',
   'vendor/xlsx.mini.min.js',
   'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
   'fonts/cormorant-garamond-latin-500-normal.woff2',

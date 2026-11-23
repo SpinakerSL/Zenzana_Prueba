@@ -1,29 +1,29 @@
 # Zenzana · Inventario y Rentabilidad
 
-App web instalable (PWA) para llevar el inventario de Zenzana Ritual Beauty Studio y calcular la rentabilidad. Funciona sin internet y guarda los datos en el propio iPhone.
+App web instalable (PWA). Funciona sin internet. Los datos viven **cifrados** dentro del iPhone, protegidos por una clave que solo tú conoces.
+
+## Seguridad: lo importante
+- Este repositorio solo contiene el programa. **No contiene tus datos** (precios, costos, sueldo, clientas).
+- **Nunca subas** a GitHub tu Excel ni el archivo `datos-zenzana.json`.
+- Al abrir la app por primera vez eliges tu clave (mínimo 8 caracteres, mejor una frase larga). Todo se guarda cifrado con ella (AES-256).
+- La app se bloquea sola si la dejas más de 2 minutos fuera. También puedes bloquearla en Ajustes.
+- Si olvidas la clave no hay forma de recuperar los datos. Guarda un respaldo (Ajustes → Respaldo), que también va cifrado.
+- El Excel que exporta la app NO va cifrado: guárdalo con cuidado.
 
 ## Publicar en GitHub Pages
-1. Crea un repositorio nuevo en GitHub (por ejemplo `zenzana-inventario`).
-2. Sube todos los archivos de esta carpeta a la raíz del repositorio (`index.html`, `app.js`, `app.css`, `sw.js`, `manifest.webmanifest` y las carpetas `fonts`, `icons`, `vendor`).
-3. En el repositorio: Settings → Pages → Source: "Deploy from a branch" → Branch: `main` / carpeta `/ (root)` → Save.
-4. En 1 o 2 minutos tendrás la dirección `https://TU-USUARIO.github.io/zenzana-inventario/`.
+1. Crea un repositorio nuevo.
+2. Arrastra el **contenido** de esta carpeta (`index.html`, `app.js`, `app.css`, `sw.js`, `manifest.webmanifest` y las carpetas `fonts`, `icons`, `vendor`) a Add file → Upload files.
+3. Settings → Pages → Deploy from a branch → `main` / `/ (root)`.
 
 ## Instalar en el iPhone
-1. Abre esa dirección en **Safari**.
-2. Toca el botón Compartir → **Añadir a pantalla de inicio**.
-3. Ábrela desde el ícono nuevo. Desde ahí funciona como una app y sin conexión.
+1. Abre la dirección en **Safari**.
+2. Compartir → **Añadir a pantalla de inicio**.
+3. Ábrela desde el ícono nuevo y crea tu clave.
 
-## Primer uso
-La app ya viene cargada con tu planilla v5: 92 productos, 15 tratamientos con sus recetas, 12 paquetes y tus costos (sueldo, horas, gastos fijos).
-1. Ajustes → revisa tu sueldo, horas y gastos fijos.
-2. Tratamientos → confirma las cantidades marcadas con ≈ (estimadas).
-3. Sesión → toca el tratamiento al terminar cada atención.
-4. Resultados → mira ganancia, tu hora y margen.
-
-Para actualizar precios o productos nuevos: Ajustes → Importar desde Excel (modo "Precios y nuevos" no toca tu stock).
-
-## Respaldo
-Los datos se guardan solo en el iPhone. Usa Ajustes → **Respaldo (JSON)** cada cierto tiempo y guárdalo en Archivos o iCloud. Si cambias de teléfono, restaura con el mismo botón.
+## Cargar tus datos (una sola vez)
+1. Pasa `datos-zenzana.json` a tu iPhone (AirDrop o app Archivos).
+2. En la app: Sesión → **Cargar archivo de datos** y elige ese archivo.
+3. Borra el archivo del teléfono y del computador cuando termines, o guárdalo en un lugar privado.
 
 ## Al actualizar la app
-Si cambias el código, sube la versión en `sw.js` (`const CACHE = 'zenzana-v3'`) para que los teléfonos descarguen la nueva.
+Sube la versión en `sw.js` (`const CACHE = 'zenzana-v5'`) para que los teléfonos descarguen la nueva.

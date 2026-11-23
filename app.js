@@ -25,27 +25,35 @@ const CAT = { tratamiento: 'Tratamiento', limpieza: 'Limpieza', desechable: 'Des
 const UNITS = ['ml', 'gr', 'un'];
 const LINES = ['Limpiezas', 'Skinboost', 'Peeling químico', 'Ciclo Zenzana', 'Otros'];
 
-/* ============ datos ============ */
+/* ============ datos y bóveda cifrada ============ */
+const VKEY = 'zenzana-vault-v1', OLDKEY = 'zenzana-inventario-v2';
 const emptyData = () => ({ v: 2, cfg: { sueldo: 0, horas: 120, margen: 0.3, comision: 0, desc: 0.1 }, fijos: [], products: [], treatments: [], packs: [], sessions: [], usos: [], meta: { lastBackup: null } });
-const clone = o => JSON.parse(JSON.stringify(o));
-function seedParts() {
-  const sd = clone(window.ZENZANA_SEED || {});
-  return { cfg: sd.cfg, fijos: sd.fijos, products: sd.products, treatments: sd.treatments, packs: sd.packs };
+let S = emptyData();
+const vault = { key: null, salt: null, iter: 600000 };
+
+const b64 = buf => { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
+const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+async function deriveKey(pass, salt, iter) {
+  const km = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: iter, hash: 'SHA-256' }, km, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
 }
-let firstRun = false;
-let S = (() => {
-  try {
-    const d = JSON.parse(localStorage.getItem(KEY));
-    if (d && Array.isArray(d.products)) return Object.assign(emptyData(), d);
-  } catch (e) {}
-  if (window.ZENZANA_SEED) { firstRun = true; return Object.assign(emptyData(), seedParts()); }
-  return emptyData();
-})();
+async function encStr(str, key) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(str));
+  return { iv: b64(iv), data: b64(ct) };
+}
+async function decStr(env, key) {
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(env.iv) }, key, unb64(env.data));
+  return new TextDecoder().decode(pt);
+}
+let saving = Promise.resolve();
 function save() {
-  try { localStorage.setItem(KEY, JSON.stringify(S)); }
-  catch (e) { toast('No se pudo guardar: sin espacio o modo privado'); }
+  if (!vault.key) return;
+  const snap = JSON.stringify(S), key = vault.key, salt = vault.salt, iter = vault.iter;
+  saving = saving.then(() => encStr(snap, key))
+    .then(env => localStorage.setItem(VKEY, JSON.stringify({ v: 1, salt, iter, ...env })))
+    .catch(() => toast('No se pudo guardar: sin espacio o modo privado'));
 }
-if (firstRun) save();
 
 const prod = id => S.products.find(p => p.id === id);
 const tById = id => S.treatments.find(t => t.id === id);
@@ -107,7 +115,7 @@ function vSesion() {
   const stale = S.meta.lastBackup ? Date.now() - S.meta.lastBackup > 14 * 864e5 : S.sessions.length >= 5;
   let h = head('Registrar sesión', 'Toca un tratamiento y se descuentan los productos usados.');
   if (!S.products.length) {
-    h += `<div class="empty"><b>Primero carga tu inventario</b>Importa tu planilla de Excel o agrega productos a mano.<br><button class="btn" data-action="goImport">Importar mi Excel</button></div>`;
+    h += `<div class="empty"><b>Primero carga tu inventario</b>Carga tu archivo de datos de Zenzana, importa tu Excel o agrega productos a mano.<br><button class="btn" data-action="goRestore">Cargar archivo de datos</button><br><button class="btn ghost" style="margin-top:8px" data-action="goImport">Importar mi Excel</button></div>`;
   } else if (!S.treatments.length) {
     h += `<div class="empty"><b>Crea tu primer tratamiento</b>Define su precio, duración y los productos que gasta.<br><button class="btn" data-action="newTreat">Crear tratamiento</button></div>`;
   } else {
@@ -143,7 +151,7 @@ function vInventario() {
   h += `<input class="search" id="q" type="search" placeholder="Buscar producto…" value="${esc(ui.q)}" autocomplete="off">`;
   h += `<div class="chips">${chip('all', 'Todos')}${chip('tratamiento', 'Tratamientos')}${chip('limpieza', 'Limpieza')}${chip('desechable', 'Desechables')}${chip('bajo', 'Stock bajo' + (low ? ' · ' + low : ''))}</div>`;
   if (!S.products.length) {
-    h += `<div class="empty"><b>Sin productos aún</b>Importa tu Excel o agrega el primero con el botón +.<br><button class="btn" data-action="goImport">Importar mi Excel</button></div>`;
+    h += `<div class="empty"><b>Sin productos aún</b>Carga tu archivo de datos, importa tu Excel o agrega el primero con el botón +.<br><button class="btn" data-action="goRestore">Cargar archivo de datos</button></div>`;
   } else if (!list.length) {
     h += `<div class="empty">No hay productos en esta vista.</div>`;
   } else {
@@ -262,16 +270,20 @@ function vAjustes() {
       <button class="btn wide" data-action="goImport">Importar desde Excel</button>
       <p class="help">Lee la hoja de inventario con columnas Productos, Cantidad (por envase), medida, Unidades, Precio Total. Calcula el stock como cantidad × unidades.</p>
     </div>
+    <h2>Seguridad</h2>
+    <div class="list" style="padding:14px">
+      <p class="help" style="margin:0 0 12px">Tus datos están cifrados en este iPhone y se bloquean solos al salir de la app unos minutos.</p>
+      <div class="row-actions" style="margin-top:0"><button class="btn" data-action="lockNow">Bloquear ahora</button><button class="btn ghost" data-action="newPass">Cambiar clave</button></div>
+    </div>
     <h2>Respaldo</h2>
     <div class="list" style="padding:14px">
-      <p class="help" style="margin:0 0 12px">Tus datos viven solo en este iPhone. Último respaldo: <b>${lb}</b>.</p>
-      <div class="row-actions" style="margin-top:0"><button class="btn gold" data-action="exportJson">Respaldo (JSON)</button><button class="btn ghost" data-action="goRestore">Restaurar</button></div>
+      <p class="help" style="margin:0 0 12px">Tus datos viven solo en este iPhone. Último respaldo: <b>${lb}</b>. El respaldo (JSON) va cifrado con tu clave; el Excel exportado no.</p>
+      <div class="row-actions" style="margin-top:0"><button class="btn gold" data-action="exportJson">Respaldo (JSON)</button><button class="btn ghost" data-action="goRestore">Cargar / restaurar</button></div>
       <button class="btn ghost wide" style="margin-top:10px" data-action="exportXlsx">Exportar todo a Excel</button>
     </div>
     <h2>Datos</h2>
     <div class="list" style="padding:14px">
-      ${window.ZENZANA_SEED ? `<button class="btn ghost wide" data-action="reseed">Volver a los datos de la planilla</button><p class="help">Restaura productos, tratamientos, paquetes y costos como venían en tu Excel. Las sesiones registradas se conservan.</p>` : ''}
-      <button class="btn danger wide" style="margin-top:12px" data-action="wipe">Borrar todos los datos</button>
+      <button class="btn danger wide" data-action="wipe">Borrar todos los datos</button>
     </div>`;
 }
 
@@ -369,6 +381,12 @@ function renderSheet() {
       <label class="field"><span>Cantidad usada (${p.unit})</span><input type="number" id="useAmt" inputmode="decimal" step="any" min="0" data-bind="amount" value="${d.amount}" placeholder="0"></label>
       <div class="quick">${q.map(v => `<button data-action="addAmt" data-v="${v}">+${v}</button>`).join('')}<button data-action="addAmt" data-v="clear">Borrar</button></div>
       <div class="row-actions"><button class="btn ghost" data-action="closeSheet">Cancelar</button><button class="btn" data-action="saveUse">Descontar</button></div>`;
+  } else if (d.kind === 'pass') {
+    h = `<h3>Cambiar clave</h3><p class="sub">Mínimo 8 caracteres. Mejor una frase larga. Si la olvidas no se puede recuperar.</p>
+      <label class="field"><span>Clave actual</span><input type="password" autocomplete="current-password" data-bind="cur"></label>
+      <label class="field"><span>Clave nueva</span><input type="password" autocomplete="new-password" data-bind="p1"></label>
+      <label class="field"><span>Repite la clave nueva</span><input type="password" autocomplete="new-password" data-bind="p2"></label>
+      <div class="row-actions"><button class="btn ghost" data-action="closeSheet">Cancelar</button><button class="btn" data-action="savePass">Cambiar</button></div>`;
   } else if (d.kind === 'fijo') {
     h = `<h3>Nuevo gasto fijo</h3>
       <label class="field"><span>Concepto</span><input type="text" data-bind="name" value="${esc(d.name)}" placeholder="Ej: Publicidad, software, contabilidad"></label>
@@ -508,7 +526,8 @@ const A = {
   /* respaldo */
   async exportJson() {
     S.meta.lastBackup = Date.now(); save();
-    await saveFile(new Blob([JSON.stringify(S)], { type: 'application/json' }), `zenzana-respaldo-${today()}.json`);
+    const env = await encStr(JSON.stringify(S), vault.key);
+    await saveFile(new Blob([JSON.stringify({ enc: 1, salt: vault.salt, iter: vault.iter, ...env })], { type: 'application/json' }), `zenzana-respaldo-${today()}.json`);
     render();
   },
   goRestore() { $('#fileRestore').click(); },
@@ -523,9 +542,18 @@ const A = {
     const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
     await saveFile(new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `zenzana-inventario-${today()}.xlsx`);
   },
-  reseed() {
-    if (!confirm('Se reemplazarán productos, tratamientos, paquetes y costos por los de tu planilla. Las sesiones registradas se conservan. ¿Continuar?')) return;
-    Object.assign(S, seedParts()); save(); render(); toast('Datos de la planilla restaurados');
+  lockNow() { lock(); },
+  newPass() { draft = { kind: 'pass', cur: '', p1: '', p2: '' }; openSheet(); },
+  async savePass() {
+    const d = draft; if (d.p1.length < 8) return toast('La clave nueva debe tener al menos 8 caracteres');
+    if (d.p1 !== d.p2) return toast('Las claves nuevas no coinciden');
+    try {
+      const old = await deriveKey(d.cur, unb64(vault.salt), vault.iter);
+      await decStr(JSON.parse(localStorage.getItem(VKEY)), old);
+    } catch (e) { return toast('La clave actual no es correcta'); }
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    vault.key = await deriveKey(d.p1, salt, vault.iter); vault.salt = b64(salt);
+    save(); await saving; closeSheet(); toast('Clave cambiada');
   },
   wipe() {
     if (!confirm('¿Borrar TODOS los datos de este dispositivo? No se puede deshacer.')) return;
@@ -653,15 +681,79 @@ $('#fileImport').addEventListener('change', e => { const f = e.target.files[0]; 
 $('#fileRestore').addEventListener('change', async e => {
   const f = e.target.files[0]; e.target.value = ''; if (!f) return;
   try {
-    const d = JSON.parse(await f.text()); if (!Array.isArray(d.products)) throw 0;
-    if (!confirm('Esto reemplazará los datos actuales con el respaldo. ¿Continuar?')) return;
-    S = Object.assign(emptyData(), d); save(); render(); toast('Respaldo restaurado');
-  } catch (err) { toast('Ese archivo no es un respaldo válido'); }
+    let d = JSON.parse(await f.text());
+    if (d.enc) {
+      let key = vault.key;
+      if (d.salt !== vault.salt || d.iter !== vault.iter) {
+        const pass = prompt('Escribe la clave con la que se hizo este respaldo');
+        if (!pass) return;
+        key = await deriveKey(pass, unb64(d.salt), d.iter);
+      }
+      d = JSON.parse(await decStr(d, key));
+    }
+    if (!Array.isArray(d.products)) throw 0;
+    if (S.products.length && !confirm('Esto reemplazará los datos actuales. ¿Continuar?')) return;
+    S = Object.assign(emptyData(), d); save(); render();
+    toast(`Cargué ${S.products.length} productos y ${S.treatments.length} tratamientos`);
+  } catch (err) { toast('No pude abrir ese archivo (¿clave incorrecta?)'); }
 });
 
+/* ============ pantalla de clave ============ */
+let hiddenAt = 0, fails = 0;
+const lockEl = () => $('#lock'), lockBody = () => $('#lockBody');
+function showLock(mode, msg) {
+  lockEl().classList.remove('hidden');
+  const setup = mode === 'setup';
+  lockBody().innerHTML = `<div class="brand">Zenzana · Ritual Beauty Studio</div>
+    <h1>${setup ? 'Crea tu clave' : 'Bienvenida'}</h1>
+    <p class="sub">${setup ? 'Protege tu inventario y tus costos. Usa una frase larga (mínimo 8 caracteres). Si la olvidas no hay forma de recuperar los datos, así que guarda también un respaldo.' : 'Escribe tu clave para ver tus datos.'}</p>
+    <form id="lockForm" autocomplete="off">
+      <input id="lp1" type="password" autocomplete="${setup ? 'new-password' : 'current-password'}" placeholder="Clave" autofocus>
+      ${setup ? '<input id="lp2" type="password" autocomplete="new-password" placeholder="Repite la clave">' : ''}
+      <p class="lock-msg" id="lockMsg">${esc(msg || '')}</p>
+      <button class="btn gold wide" id="lockBtn" type="submit">${setup ? 'Crear clave' : 'Entrar'}</button>
+    </form>`;
+  $('#lockForm').addEventListener('submit', ev => { ev.preventDefault(); setup ? doSetup() : doUnlock(); });
+}
+function lockBusy(on, msg) { const b = $('#lockBtn'); if (b) { b.disabled = on; b.textContent = on ? 'Verificando…' : b.dataset.t || b.textContent; } if (msg != null) $('#lockMsg').textContent = msg; }
+async function doSetup() {
+  const p1 = $('#lp1').value, p2 = $('#lp2').value;
+  if (p1.length < 8) return ($('#lockMsg').textContent = 'La clave debe tener al menos 8 caracteres.');
+  if (p1 !== p2) return ($('#lockMsg').textContent = 'Las claves no coinciden.');
+  lockBusy(true, '');
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  vault.salt = b64(salt); vault.iter = 600000; vault.key = await deriveKey(p1, salt, vault.iter);
+  try { const old = JSON.parse(localStorage.getItem(OLDKEY)); if (old && Array.isArray(old.products)) { S = Object.assign(emptyData(), old); localStorage.removeItem(OLDKEY); } } catch (e) {}
+  save(); await saving; enter();
+}
+async function doUnlock() {
+  const pass = $('#lp1').value; if (!pass) return;
+  lockBusy(true, '');
+  try {
+    const env = JSON.parse(localStorage.getItem(VKEY));
+    const key = await deriveKey(pass, unb64(env.salt), env.iter);
+    const d = JSON.parse(await decStr(env, key));
+    vault.key = key; vault.salt = env.salt; vault.iter = env.iter; S = Object.assign(emptyData(), d); fails = 0; enter();
+  } catch (e) {
+    fails++; const wait = Math.min(30, fails * 2);
+    showLock('unlock', `Clave incorrecta. Espera ${wait} segundos para reintentar.`);
+    $('#lockBtn').disabled = true; setTimeout(() => { const b = $('#lockBtn'); if (b) b.disabled = false; $('#lockMsg').textContent = ''; }, wait * 1000);
+  }
+}
+function enter() { lockEl().classList.add('hidden'); lockBody().innerHTML = ''; render(); }
+function lock() {
+  vault.key = null; S = emptyData(); draft = null;
+  $('#sheet').classList.add('hidden'); $('#toast').classList.add('hidden'); $('#view').innerHTML = '';
+  showLock('unlock');
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) hiddenAt = Date.now();
+  else if (vault.key && hiddenAt && Date.now() - hiddenAt > 2 * 60 * 1000) lock();
+});
+function boot() { showLock(localStorage.getItem(VKEY) ? 'unlock' : 'setup'); }
+
 /* ============ inicio ============ */
-render();
-if (firstRun) toast(`Cargué ${S.products.length} productos y ${S.treatments.length} tratamientos de tu planilla`);
+boot();
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
 })();
